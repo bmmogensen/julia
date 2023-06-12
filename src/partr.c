@@ -114,6 +114,11 @@ static int may_mark(void) JL_NOTSAFEPOINT
     return (jl_atomic_load(&gc_n_threads_marking) > 0);
 }
 
+static int may_sweep(jl_ptls_t ptls) JL_NOTSAFEPOINT
+{
+    return (ptls->tid == gc_first_tid && (jl_atomic_load(&gc_sweeping_assists_needed) > 0));
+}
+
 // gc thread function
 void jl_gc_threadfun(void *arg)
 {
@@ -131,11 +136,24 @@ void jl_gc_threadfun(void *arg)
 
     while (1) {
         uv_mutex_lock(&ptls->sleep_lock);
-        while (!may_mark()) {
+        while (!may_mark() && !may_sweep(ptls)) {
             uv_cond_wait(&ptls->wake_signal, &ptls->sleep_lock);
         }
         uv_mutex_unlock(&ptls->sleep_lock);
-        gc_mark_loop_parallel(ptls, 0);
+        if (may_sweep(ptls)) {
+            while (1) {
+                jl_gc_pagemeta_t *pg = pop_lf_page_metadata_back(&global_page_pool_lazily_freed);
+                if (pg == NULL) {
+                    break;
+                }
+                jl_gc_free_page(pg);
+                push_lf_page_metadata_back(&global_page_pool_freed, pg);
+            }
+            jl_atomic_fetch_add(&gc_sweeping_assists_needed, -1);
+        }
+        else {
+            gc_mark_loop_parallel(ptls, 0);
+        }
     }
 }
 

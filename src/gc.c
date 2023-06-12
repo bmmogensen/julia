@@ -13,6 +13,8 @@ extern "C" {
 
 // Number of threads currently running the GC mark-loop
 _Atomic(int) gc_n_threads_marking;
+// To indicate whether concurrent sweeping should run
+_Atomic(int) gc_sweeping_assists_needed;
 // `tid` of mutator thread that triggered GC
 _Atomic(int) gc_master_tid;
 // `tid` of first GC thread
@@ -1232,7 +1234,10 @@ static NOINLINE jl_taggedvalue_t *gc_add_page(jl_gc_pool_t *p) JL_NOTSAFEPOINT
     // Do not pass in `ptls` as argument. This slows down the fast path
     // in pool_alloc significantly
     jl_ptls_t ptls = jl_current_task->ptls;
-    jl_gc_pagemeta_t *pg = jl_gc_alloc_page();
+    jl_gc_pagemeta_t *pg = pop_page_metadata_back(&ptls->page_metadata_lazily_freed);
+    if (pg == NULL) {
+        pg = jl_gc_alloc_page();
+    }
     pg->osize = p->osize;
     pg->thread_n = ptls->tid;
     set_page_metadata(pg);
@@ -1289,20 +1294,8 @@ STATIC_INLINE jl_value_t *jl_gc_pool_alloc_inner(jl_ptls_t ptls, int pool_offset
             assert(pg->osize == p->osize);
             pg->nfree = 0;
             pg->has_young = 1;
-            pg = pop_page_metadata_back(&ptls->page_metadata_lazily_freed);
-            if (pg != NULL) {
-                v = gc_reset_page(ptls, p, pg);
-                pg->osize = p->osize;
-                push_page_metadata_back(&ptls->page_metadata_allocd, pg);
-            }
-            else {
-                v = NULL;
-            }
         }
-        // Not an else!!
-        if (v == NULL) {
-            v = gc_add_page(p);
-        }
+        v = gc_add_page(p);
         next = (jl_taggedvalue_t*)((char*)v + osize);
     }
     p->newpages = next;
@@ -1356,12 +1349,12 @@ static jl_taggedvalue_t **gc_sweep_page(jl_gc_pool_t *p, jl_gc_pagemeta_t **allo
     int pg_skpd = 1;
     if (!pg->has_marked) {
         reuse_page = 0;
-    #ifdef _P64
         // lazy version: (empty) if the whole page was already unused, free it (return it to the pool)
         // eager version: (freedall) free page as soon as possible
         // the eager one uses less memory.
         // FIXME - need to do accounting on a per-thread basis
         // on quick sweeps, keep a few pages empty but allocated for performance
+    #ifdef _P64 // TODO: re-enable this on `_P32`?
         if (!sweep_full && lazy_freed_pages <= default_collect_interval / GC_PAGE_SZ) {
             lazy_freed_pages++;
             freed_lazily = 1;
@@ -1440,8 +1433,13 @@ done:
         push_page_metadata_back(lazily_freed, pg);
     }
     else {
-        jl_gc_free_page(pg);
-        push_lf_page_metadata_back(&global_page_pool_freed, pg);
+        if (jl_n_gcthreads == 0) {
+            jl_gc_free_page(pg);
+            push_lf_page_metadata_back(&global_page_pool_freed, pg);
+        }
+        else {
+            push_lf_page_metadata_back(&global_page_pool_lazily_freed, pg);
+        }
     }
     gc_time_count_page(freedall, pg_skpd);
     gc_num.freed += (nfree - old_nfree) * osize;
@@ -1559,6 +1557,15 @@ static void gc_sweep_pool(int sweep_full)
                 *pfl[t_i * JL_GC_N_POOLS + i] = NULL;
             }
         }
+    }
+
+    // wake thread up to sweep concurrently
+    if (jl_n_gcthreads > 0) {
+        jl_atomic_fetch_add(&gc_sweeping_assists_needed, 1);
+        jl_ptls_t ptls2 = gc_all_tls_states[gc_first_tid];
+        uv_mutex_lock(&ptls2->sleep_lock);
+        uv_cond_signal(&ptls2->wake_signal);
+        uv_mutex_unlock(&ptls2->sleep_lock);
     }
 
     gc_time_pool_end(sweep_full);
