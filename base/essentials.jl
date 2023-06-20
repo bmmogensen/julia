@@ -1,6 +1,6 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
-import Core: CodeInfo, SimpleVector, donotdelete, compilerbarrier, arrayref
+import Core: CodeInfo, SimpleVector, donotdelete, compilerbarrier, arrayref, should_check_bounds
 
 const Callable = Union{Function,Type}
 
@@ -10,8 +10,8 @@ const Bottom = Union{}
 length(a::Array) = arraylen(a)
 
 # This is more complicated than it needs to be in order to get Win64 through bootstrap
-eval(:(getindex(A::Array, i1::Int) = arrayref($(Expr(:boundscheck)), A, i1)))
-eval(:(getindex(A::Array, i1::Int, i2::Int, I::Int...) = (@inline; arrayref($(Expr(:boundscheck)), A, i1, i2, I...))))
+eval(:(getindex(A::Array, i1::Int) = arrayref(should_check_bounds($(Expr(:boundscheck))), A, i1)))
+eval(:(getindex(A::Array, i1::Int, i2::Int, I::Int...) = (@inline; arrayref(should_check_bounds($(Expr(:boundscheck))), A, i1, i2, I...))))
 
 ==(a::GlobalRef, b::GlobalRef) = a.mod === b.mod && a.name === b.name
 
@@ -678,7 +678,7 @@ julia> f2()
     implementation after you are certain its behavior is correct.
 """
 macro boundscheck(blk)
-    return Expr(:if, Expr(:boundscheck), esc(blk))
+    return Expr(:if, Expr(:call, GlobalRef(Core, :should_check_bounds), Expr(:boundscheck)), esc(blk))
 end
 
 """
@@ -741,7 +741,7 @@ end
 
 # SimpleVector
 
-@eval getindex(v::SimpleVector, i::Int) = (@_foldable_meta; Core._svec_ref($(Expr(:boundscheck)), v, i))
+@eval getindex(v::SimpleVector, i::Int) = (@_foldable_meta; Core._svec_ref(should_check_bounds($(Expr(:boundscheck))), v, i))
 function length(v::SimpleVector)
     @_total_meta
     t = @_gc_preserve_begin v
