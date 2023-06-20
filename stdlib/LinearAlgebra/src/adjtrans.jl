@@ -83,10 +83,10 @@ inplace_adj_or_trans(::Type{<:Transpose}) = transpose!
 _unwrap(A::Adjoint)   = parent(A)
 _unwrap(A::Transpose) = parent(A)
 
-# unwraps Adjoint, Transpose, and Conjugate only
-_unwrap_atc(A) = A
-_unwrap_atc(A::Adjoint)   = parent(A)
-_unwrap_atc(A::Transpose) = parent(A)
+# unwraps Adjoint and Transpose only
+_unwrap_at(A) = A
+_unwrap_at(A::Adjoint)   = parent(A)
+_unwrap_at(A::Transpose) = parent(A)
 
 Base.dataids(A::Union{Adjoint, Transpose}) = Base.dataids(A.parent)
 Base.unaliascopy(A::Union{Adjoint,Transpose}) = typeof(A)(Base.unaliascopy(A.parent))
