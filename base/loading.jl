@@ -2879,7 +2879,7 @@ function show(io::IO, it::ImageTarget)
     first = true
     for feat in feature_names()
         if test_feature(it.features_en, feat)
-            name =  Base.unsafe_string(feat.name)
+            name = Base.unsafe_string(feat.name)
             if first
                 first = false
                 print(io, name)
@@ -2965,11 +2965,10 @@ end
             end
             rejection_reasons = check_clone_targets(clone_targets)
             if !isnothing(rejection_reasons)
-                @debug "Rejecting cache file $cachefile for $modkey\n" * rejection_reasons
-                image_targets = parse_image_targets(clone_targets)
-                curr_targets = current_image_targets()
-                @debug "Image targets: $image_targets"
-                @debug "Current targets: $curr_targets"
+                @debug("Rejecting cache file $cachefile for $modkey:",
+                    Reasons=rejection_reasons,
+                    var"Image Targets"=parse_image_targets(clone_targets),
+                    var"Current Targets"=current_image_targets())
                 return true
             end
             if !isfile(ocachefile)
