@@ -1358,6 +1358,7 @@ static jl_taggedvalue_t **gc_sweep_page(jl_gc_pool_t *p, jl_gc_pagemeta_t **allo
     int pg_skpd = 1;
     if (!pg->has_marked) {
         reuse_page = 0;
+    #ifdef _P64
         // lazy version: (empty) if the whole page was already unused, free it (return it to the pool)
         // eager version: (freedall) free page as soon as possible
         // the eager one uses less memory.
@@ -1367,6 +1368,7 @@ static jl_taggedvalue_t **gc_sweep_page(jl_gc_pool_t *p, jl_gc_pagemeta_t **allo
             lazy_freed_pages++;
             freed_lazily = 1;
         }
+    #endif
         nfree = (GC_PAGE_SZ - GC_PAGE_OFFSET) / osize;
         goto done;
     }
