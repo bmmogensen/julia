@@ -129,9 +129,6 @@ NOINLINE jl_gc_pagemeta_t *jl_gc_alloc_page(void) JL_NOTSAFEPOINT
     }
     // must map a new set of pages
     char *data = jl_gc_try_alloc_pages();
-    if (data == NULL) {
-        jl_throw(jl_memory_exception);
-    }
     meta = (jl_gc_pagemeta_t*)malloc_s(block_pg_cnt * sizeof(jl_gc_pagemeta_t));
     for (int i = 0; i < block_pg_cnt; i++) {
         jl_gc_pagemeta_t *pg = &meta[i];

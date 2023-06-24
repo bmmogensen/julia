@@ -1234,10 +1234,7 @@ static NOINLINE jl_taggedvalue_t *gc_add_page(jl_gc_pool_t *p) JL_NOTSAFEPOINT
     // Do not pass in `ptls` as argument. This slows down the fast path
     // in pool_alloc significantly
     jl_ptls_t ptls = jl_current_task->ptls;
-    jl_gc_pagemeta_t *pg = pop_page_metadata_back(&ptls->page_metadata_lazily_freed);
-    if (pg == NULL) {
-        pg = jl_gc_alloc_page();
-    }
+    jl_gc_pagemeta_t *pg = jl_gc_alloc_page();
     pg->osize = p->osize;
     pg->thread_n = ptls->tid;
     set_page_metadata(pg);
@@ -1294,8 +1291,20 @@ STATIC_INLINE jl_value_t *jl_gc_pool_alloc_inner(jl_ptls_t ptls, int pool_offset
             assert(pg->osize == p->osize);
             pg->nfree = 0;
             pg->has_young = 1;
+            pg = pop_page_metadata_back(&ptls->page_metadata_lazily_freed);
+            if (pg != NULL) {
+                v = gc_reset_page(ptls, p, pg);
+                pg->osize = p->osize;
+                push_page_metadata_back(&ptls->page_metadata_allocd, pg);
+            }
+            else {
+                v = NULL;
+            }
         }
-        v = gc_add_page(p);
+        // Not an else!!
+        if (v == NULL) {
+            v = gc_add_page(p);
+        }
         next = (jl_taggedvalue_t*)((char*)v + osize);
     }
     p->newpages = next;
@@ -1354,12 +1363,10 @@ static jl_taggedvalue_t **gc_sweep_page(jl_gc_pool_t *p, jl_gc_pagemeta_t **allo
         // the eager one uses less memory.
         // FIXME - need to do accounting on a per-thread basis
         // on quick sweeps, keep a few pages empty but allocated for performance
-    #ifdef _P64 // TODO: re-enable this on `_P32`?
         if (!sweep_full && lazy_freed_pages <= default_collect_interval / GC_PAGE_SZ) {
             lazy_freed_pages++;
             freed_lazily = 1;
         }
-    #endif
         nfree = (GC_PAGE_SZ - GC_PAGE_OFFSET) / osize;
         goto done;
     }
