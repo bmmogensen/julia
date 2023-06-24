@@ -1442,6 +1442,7 @@ done:
         push_page_metadata_back(lazily_freed, pg);
     }
     else {
+    #ifdef _P64 // only enable concurrent sweeping on 64bit
         if (jl_n_gcthreads == 0) {
             jl_gc_free_page(pg);
             push_lf_page_metadata_back(&global_page_pool_freed, pg);
@@ -1449,6 +1450,10 @@ done:
         else {
             push_lf_page_metadata_back(&global_page_pool_lazily_freed, pg);
         }
+    #else
+        jl_gc_free_page(pg);
+        push_lf_page_metadata_back(&global_page_pool_freed, pg);
+    #endif
     }
     gc_time_count_page(freedall, pg_skpd);
     gc_num.freed += (nfree - old_nfree) * osize;
@@ -1568,6 +1573,7 @@ static void gc_sweep_pool(int sweep_full)
         }
     }
 
+#ifdef _P64 // only enable concurrent sweeping on 64bit
     // wake thread up to sweep concurrently
     if (jl_n_gcthreads > 0) {
         jl_atomic_fetch_add(&gc_sweeping_assists_needed, 1);
@@ -1576,6 +1582,7 @@ static void gc_sweep_pool(int sweep_full)
         uv_cond_signal(&ptls2->wake_signal);
         uv_mutex_unlock(&ptls2->sleep_lock);
     }
+#endif
 
     gc_time_pool_end(sweep_full);
 }
