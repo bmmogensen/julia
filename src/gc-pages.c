@@ -120,7 +120,7 @@ NOINLINE jl_gc_pagemeta_t *jl_gc_alloc_page(void) JL_NOTSAFEPOINT
     }
 
     uv_mutex_lock(&gc_perm_lock);
-    // another thread may have allocated a large block while we're waiting...
+    // another thread may have allocated a large block while we were waiting...
     meta = pop_lf_page_metadata_back(&global_page_pool_clean);
     if (meta != NULL) {
         uv_mutex_unlock(&gc_perm_lock);

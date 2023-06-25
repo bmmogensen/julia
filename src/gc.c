@@ -1358,7 +1358,7 @@ static jl_taggedvalue_t **gc_sweep_page(jl_gc_pool_t *p, jl_gc_pagemeta_t **allo
     int pg_skpd = 1;
     if (!pg->has_marked) {
         reuse_page = 0;
-    #ifdef _P64
+    #ifdef _P64 // TODO: re-enable on `_P32`?
         // lazy version: (empty) if the whole page was already unused, free it (return it to the pool)
         // eager version: (freedall) free page as soon as possible
         // the eager one uses less memory.

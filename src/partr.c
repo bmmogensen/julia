@@ -109,12 +109,12 @@ void jl_init_threadinginfra(void)
 void JL_NORETURN jl_finish_task(jl_task_t *t);
 
 
-static int may_mark(void) JL_NOTSAFEPOINT
+static inline int may_mark(void) JL_NOTSAFEPOINT
 {
     return (jl_atomic_load(&gc_n_threads_marking) > 0);
 }
 
-static int may_sweep(jl_ptls_t ptls) JL_NOTSAFEPOINT
+static inline int may_sweep(jl_ptls_t ptls) JL_NOTSAFEPOINT
 {
     return (ptls->tid == gc_first_tid && (jl_atomic_load(&gc_sweeping_assists_needed) > 0));
 }
