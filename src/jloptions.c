@@ -831,8 +831,8 @@ restart_switch:
             long nmarkthreads = strtol(optarg, &endptr, 10);
             if (errno != 0 || optarg == endptr || nmarkthreads < 1 || nmarkthreads >= INT16_MAX) {
                 jl_errorf("julia: --gcthreads=<n>[,<m>]; n must be an integer >= 1");
-                jl_options.nmarkthreads = (int16_t)nmarkthreads;
             }
+            jl_options.nmarkthreads = (int16_t)nmarkthreads;
             if (*endptr == ',') {
                 errno = 0;
                 char *endptri;
