@@ -11,6 +11,7 @@ struct JLOptions
     cpu_target::Ptr{UInt8}
     nthreadpools::Int16
     nthreads::Int16
+    ngcthreads::Int16
     nmarkthreads::Int16
     nsweepthreads::Int8
     nthreads_per_pool::Ptr{Int16}
