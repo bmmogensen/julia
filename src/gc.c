@@ -11,14 +11,18 @@
 extern "C" {
 #endif
 
+// Number of GC threads that may run parallel marking
+int jl_n_markthreads;
+// Number of GC threads that may run concurrent sweeping (0 or 1)
+int jl_n_sweepthreads;
 // Number of threads currently running the GC mark-loop
 _Atomic(int) gc_n_threads_marking;
-// To indicate whether concurrent sweeping should run
-_Atomic(int) gc_sweeping_assists_needed;
 // `tid` of mutator thread that triggered GC
 _Atomic(int) gc_master_tid;
 // `tid` of first GC thread
 int gc_first_tid;
+// To indicate whether concurrent sweeping should run
+uv_sem_t gc_sweep_assists_needed;
 
 // Linked list of callback functions
 
@@ -1443,7 +1447,7 @@ done:
     }
     else {
     #ifdef _P64 // only enable concurrent sweeping on 64bit
-        if (jl_n_gcthreads == 0) {
+        if (jl_n_sweepthreads == 0) {
             jl_gc_free_page(pg);
             push_lf_page_metadata_back(&global_page_pool_freed, pg);
         }
@@ -1575,12 +1579,8 @@ static void gc_sweep_pool(int sweep_full)
 
 #ifdef _P64 // only enable concurrent sweeping on 64bit
     // wake thread up to sweep concurrently
-    if (jl_n_gcthreads > 0) {
-        jl_atomic_fetch_add(&gc_sweeping_assists_needed, 1);
-        jl_ptls_t ptls2 = gc_all_tls_states[gc_first_tid];
-        uv_mutex_lock(&ptls2->sleep_lock);
-        uv_cond_signal(&ptls2->wake_signal);
-        uv_mutex_unlock(&ptls2->sleep_lock);
+    if (jl_n_sweepthreads > 0) {
+        uv_sem_post(&gc_sweep_assists_needed);
     }
 #endif
 
@@ -2714,8 +2714,8 @@ void gc_mark_and_steal(jl_ptls_t ptls)
     // of work for the mark loop
     steal : {
         // Try to steal chunk from random GC thread
-        for (int i = 0; i < 4 * jl_n_gcthreads; i++) {
-            uint32_t v = gc_first_tid + cong(UINT64_MAX, UINT64_MAX, &ptls->rngseed) % jl_n_gcthreads;
+        for (int i = 0; i < 4 * jl_n_markthreads; i++) {
+            uint32_t v = gc_first_tid + cong(UINT64_MAX, UINT64_MAX, &ptls->rngseed) % jl_n_markthreads;
             jl_gc_markqueue_t *mq2 = &gc_all_tls_states[v]->mark_queue;
             c = gc_chunkqueue_steal_from(mq2);
             if (c.cid != GC_empty_chunk) {
@@ -2724,7 +2724,7 @@ void gc_mark_and_steal(jl_ptls_t ptls)
             }
         }
         // Sequentially walk GC threads to try to steal chunk
-        for (int i = gc_first_tid; i < gc_first_tid + jl_n_gcthreads; i++) {
+        for (int i = gc_first_tid; i < gc_first_tid + jl_n_markthreads; i++) {
             jl_gc_markqueue_t *mq2 = &gc_all_tls_states[i]->mark_queue;
             c = gc_chunkqueue_steal_from(mq2);
             if (c.cid != GC_empty_chunk) {
@@ -2741,15 +2741,15 @@ void gc_mark_and_steal(jl_ptls_t ptls)
             }
         }
         // Try to steal pointer from random GC thread
-        for (int i = 0; i < 4 * jl_n_gcthreads; i++) {
-            uint32_t v = gc_first_tid + cong(UINT64_MAX, UINT64_MAX, &ptls->rngseed) % jl_n_gcthreads;
+        for (int i = 0; i < 4 * jl_n_markthreads; i++) {
+            uint32_t v = gc_first_tid + cong(UINT64_MAX, UINT64_MAX, &ptls->rngseed) % jl_n_markthreads;
             jl_gc_markqueue_t *mq2 = &gc_all_tls_states[v]->mark_queue;
             new_obj = gc_ptr_queue_steal_from(mq2);
             if (new_obj != NULL)
                 goto mark;
         }
         // Sequentially walk GC threads to try to steal pointer
-        for (int i = gc_first_tid; i < gc_first_tid + jl_n_gcthreads; i++) {
+        for (int i = gc_first_tid; i < gc_first_tid + jl_n_markthreads; i++) {
             jl_gc_markqueue_t *mq2 = &gc_all_tls_states[i]->mark_queue;
             new_obj = gc_ptr_queue_steal_from(mq2);
             if (new_obj != NULL)
@@ -2771,7 +2771,7 @@ void gc_mark_loop_parallel(jl_ptls_t ptls, int master)
         jl_atomic_store(&gc_master_tid, ptls->tid);
         // Wake threads up and try to do some work
         jl_atomic_fetch_add(&gc_n_threads_marking, 1);
-        for (int i = gc_first_tid; i < gc_first_tid + jl_n_gcthreads; i++) {
+        for (int i = gc_first_tid; i < gc_first_tid + jl_n_markthreads; i++) {
             jl_ptls_t ptls2 = gc_all_tls_states[i];
             uv_mutex_lock(&ptls2->sleep_lock);
             uv_cond_signal(&ptls2->wake_signal);
@@ -2794,7 +2794,7 @@ void gc_mark_loop_parallel(jl_ptls_t ptls, int master)
 
 void gc_mark_loop(jl_ptls_t ptls)
 {
-    if (jl_n_gcthreads == 0 || gc_heap_snapshot_enabled) {
+    if (jl_n_markthreads == 0 || gc_heap_snapshot_enabled) {
         gc_mark_loop_serial(ptls);
     }
     else {
@@ -3088,13 +3088,13 @@ static int _jl_gc_collect(jl_ptls_t ptls, jl_gc_collection_t collection)
         }
 
         assert(gc_n_threads);
-        int single_threaded = (jl_n_gcthreads == 0 || gc_heap_snapshot_enabled);
+        int single_threaded_mark = (jl_n_markthreads == 0 || gc_heap_snapshot_enabled);
         for (int t_i = 0; t_i < gc_n_threads; t_i++) {
             jl_ptls_t ptls2 = gc_all_tls_states[t_i];
             jl_ptls_t ptls_dest = ptls;
             jl_gc_markqueue_t *mq_dest = mq;
-            if (!single_threaded) {
-                ptls_dest = gc_all_tls_states[gc_first_tid + t_i % jl_n_gcthreads];
+            if (!single_threaded_mark) {
+                ptls_dest = gc_all_tls_states[gc_first_tid + t_i % jl_n_markthreads];
                 mq_dest = &ptls_dest->mark_queue;
             }
             if (ptls2 != NULL) {
@@ -3536,6 +3536,7 @@ void jl_gc_init(void)
     JL_MUTEX_INIT(&finalizers_lock, "finalizers_lock");
     uv_mutex_init(&gc_cache_lock);
     uv_mutex_init(&gc_perm_lock);
+    uv_sem_init(&gc_sweep_assists_needed, 0);
 
     jl_gc_init_page();
     jl_gc_debug_init();

@@ -114,13 +114,8 @@ static inline int may_mark(void) JL_NOTSAFEPOINT
     return (jl_atomic_load(&gc_n_threads_marking) > 0);
 }
 
-static inline int may_sweep(jl_ptls_t ptls) JL_NOTSAFEPOINT
-{
-    return (ptls->tid == gc_first_tid && (jl_atomic_load(&gc_sweeping_assists_needed) > 0));
-}
-
-// gc thread function
-void jl_gc_threadfun(void *arg)
+// gc thread mark function
+void jl_gc_mark_threadfun(void *arg)
 {
     jl_threadarg_t *targ = (jl_threadarg_t*)arg;
 
@@ -136,23 +131,38 @@ void jl_gc_threadfun(void *arg)
 
     while (1) {
         uv_mutex_lock(&ptls->sleep_lock);
-        while (!may_mark() && !may_sweep(ptls)) {
+        while (!may_mark()) {
             uv_cond_wait(&ptls->wake_signal, &ptls->sleep_lock);
         }
         uv_mutex_unlock(&ptls->sleep_lock);
-        if (may_sweep(ptls)) {
-            while (1) {
-                jl_gc_pagemeta_t *pg = pop_lf_page_metadata_back(&global_page_pool_lazily_freed);
-                if (pg == NULL) {
-                    break;
-                }
-                jl_gc_free_page(pg);
-                push_lf_page_metadata_back(&global_page_pool_freed, pg);
+        gc_mark_loop_parallel(ptls, 0);
+    }
+}
+
+// gc thread sweep function
+void jl_gc_sweep_threadfun(void *arg)
+{
+    jl_threadarg_t *targ = (jl_threadarg_t*)arg;
+
+    // initialize this thread (set tid and create heap)
+    jl_ptls_t ptls = jl_init_threadtls(targ->tid);
+
+    // wait for all threads
+    jl_gc_state_set(ptls, JL_GC_STATE_WAITING, 0);
+    uv_barrier_wait(targ->barrier);
+
+    // free the thread argument here
+    free(targ);
+
+    while (1) {
+        uv_sem_wait(&gc_sweep_assists_needed);
+        while (1) {
+            jl_gc_pagemeta_t *pg = pop_lf_page_metadata_back(&global_page_pool_lazily_freed);
+            if (pg == NULL) {
+                break;
             }
-            jl_atomic_fetch_add(&gc_sweeping_assists_needed, -1);
-        }
-        else {
-            gc_mark_loop_parallel(ptls, 0);
+            jl_gc_free_page(pg);
+            push_lf_page_metadata_back(&global_page_pool_freed, pg);
         }
     }
 }
