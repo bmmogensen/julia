@@ -40,7 +40,6 @@ JL_DLLEXPORT void jl_init_options(void)
                         NULL, // cpu_target ("native", "core2", etc...)
                         0,    // nthreadpools
                         0,    // nthreads
-                        0,    // ngcthreads
                         0,    // nmarkthreads
                         0,    // nsweepthreads
                         NULL, // nthreads_per_pool
