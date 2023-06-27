@@ -1332,8 +1332,8 @@ function get_threads_spec(opts)
 end
 
 function get_gcthreads_spec(opts)
-    if opts.markthreads > 0 || opts.sweepthreads > 0
-        `--gcthreads=$(opts.markthreads),$(opts.sweepthreads)`
+    if opts.nmarkthreads > 0 || opts.nsweepthreads > 0
+        `--gcthreads=$(opts.nmarkthreads),$(opts.nsweepthreads)`
     else
         ``
     end
