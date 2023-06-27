@@ -1585,7 +1585,7 @@ static jl_value_t *inst_datatype_inner(jl_datatype_t *dt, jl_svec_t *p, jl_value
     }
     // if some normalization might be needed, do that now
     // it is probably okay to mutate iparams, and we only store globally rooted objects here
-    if (check && cacheable) {
+    if (cacheable) {
         size_t i;
         for (i = 0; i < ntp; i++) {
             jl_value_t *pi = iparams[i];
@@ -1678,7 +1678,7 @@ static jl_value_t *inst_datatype_inner(jl_datatype_t *dt, jl_svec_t *p, jl_value
     }
 
     // try to simplify some type parameters
-    if (check && tn != jl_type_typename) {
+    if (tn != jl_type_typename) {
         size_t i;
         int changed = 0;
         if (istuple) // normalization might change Tuple's, but not other types's, cacheable status
